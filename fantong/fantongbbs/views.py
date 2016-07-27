@@ -15,8 +15,36 @@ from django.utils import timezone
 import json
 
 
+def search_by_tag(request, inputword):
+    if request.user.is_anonymous():
+        user = None
+    else:
+        user = request.user.bbsuser
+    searchs = inputword.split('_')
+    posts = BBSPost.objects.filter(PParentID=None).filter(PDelete=False)
+    if len(searchs) == 3:
+        if searchs[0] != '':
+            posts = posts.filter(PTagLocation__TInfo=searchs[0])
+        if searchs[1] != '':
+            posts = posts.filter(PTagClass__TInfo=searchs[1])
+        if searchs[2] != '':
+            posts = posts.filter(PTagPrice__TInfo=searchs[2])
+
+    return render(request, 'multisearch.html', {'posts': posts, 'user': user})
+
+
+
 @csrf_exempt
-def ajax_change_nickname(request,userid):
+def ajax_get_tag(request):
+    tags = list(Taginformation.objects.all())
+    ans = []
+    for tag in tags:
+        ans.append([tag.TClass, tag.TInfo])
+    return HttpResponse(json.dumps(ans), content_type="application/json")
+
+
+@csrf_exempt
+def ajax_change_nickname(request, userid):
     user = BBSUser.objects.get(user=userid)
     user.UNickname = request.POST['content']
     user.save()
@@ -41,6 +69,7 @@ def ajax_append_files(request):
         ans_list.append(path)
     return HttpResponse(json.dumps(ans_list), content_type="application/json")
 
+
 @csrf_exempt
 def ajax_deal(request):
     print(request)
@@ -59,7 +88,7 @@ def ajax_deal(request):
 
 def search_postbycontent(request,searchword):
     if request.POST.get('search'):
-        return HttpResponseRedirect('/search/post/'+request.POST['search'].replace(" ","_"))
+        return HttpResponseRedirect('/search/post/'+request.POST['search'].replace(" ", "_"))
     search = searchword.split("_")
     posts = BBSPost.objects.all()
     user = request.user.bbsuser
@@ -137,65 +166,12 @@ def get_user(request, param):
         return HttpResponse("请登录以查看他人信息")
 
 @csrf_exempt
-def forbid_user_deal(request):
-    user = User.objects.get(id=int(request.POST['toBeForbiddenUserID']))
-    user = BBSUser.objects.get(user=user)
-    if user.UForbidden:
-        user.UForbidden = False
-    else:
-        user.UForbidden = True
-    user.save()
-    return HttpResponse('forbid success')
-
-def delete_user_deal(request, param):
-    if request.user.bbsuser.UAdmin:
-        user = User.objects.get(username=param)
-        #删除帖子
-        posts = BBSPost.objects.filter(PUserID=user).order_by('-PTime')
-        for post in posts:
-            comPosts = BBSPost.objects.filter(PParentID=post)
-            for comPost in comPosts:
-                miniPosts = BBSPost.objects.filter(PParentID=comPost)
-                for miniPost in miniPosts:
-                    miniPost.PUserID.bbsuser.UPostNum -= 1
-                    miniPost.PUserID.bbsuser.save()
-                    UserFollowPost.objects.filter(PostID=miniPost).delete()
-                    UserLikePost.objects.filter(PostID=miniPost).delete()
-                    miniPost.delete()
-                comPost.PUserID.bbsuser.UPostNum -= 1
-                comPost.PUserID.bbsuser.save()
-                UserFollowPost.objects.filter(PostID=comPost).delete()
-                UserLikePost.objects.filter(PostID=comPost).delete()
-                comPost.delete()
-            post.PUserID.bbsuser.UPostNum -= 1
-            post.PUserID.bbsuser.save()
-            UserFollowPost.objects.filter(PostID=post).delete()
-            UserLikePost.objects.filter(PostID=post).delete()
-            post.delete()
-        #删除用户关注关系
-        FollowUser.objects.filter(User1ID=user).delete()
-        followUsers = FollowUser.objects.filter(User2ID=user)
-        for followUser in followUsers:
-            followUser.User1ID.bbsuser.UFollowUserNum -= 1
-        followUsers.delete()
-        #删除用户收藏帖子关系
-        UserFollowPost.objects.filter(UserID=user).delete()
-        #删除用户点赞帖子关系
-        UserLikePost.objects.filter(UserID=user).delete()
-        
-        user.bbsuser.delete()
-        user.delete()
-        return HttpResponse('用户已被删除')
-    else:
-        return HttpResponse('没有权限')
-    
-
-@csrf_exempt
 def follow_user_deal(request):
     user1 = User.objects.get(id=int(request.POST['user1ID']))
     user1 = BBSUser.objects.get(user=user1)
     user2 = User.objects.get(id=int(request.POST['user2ID']))
     user2 = BBSUser.objects.get(user=user2)
+
     if FollowUser.objects.filter(User1ID=user1.user, User2ID=user2.user).exists():
         FollowUser.objects.get(User1ID=user1.user, User2ID=user2.user).delete()
         user1.UFollowUserNum -= 1
@@ -247,10 +223,22 @@ def like_post_deal(request):
         post.save()
     return HttpResponse('follow success')
 
-def bbs_post_detail(request, param):
+@csrf_exempt
+def top_post_deal(request):
+    post = BBSPost.objects.get(id=int(request.POST['postID']))
+    if post.PTop > 0:
+        post.PTop = 0
+        post.save()
+    else:
+        post.PTop = 1
+        post.save()
+    return HttpResponse('top success')
+
+def bbs_post_detail(request, param, param1):
     if request.POST.get('search'):
         return HttpResponseRedirect('/search/post/'+request.POST['search'].replace(" ","_"))
     threadID = int(param)
+    OPonly = False
     if request.user.is_anonymous():
         user = None
     else:
@@ -268,14 +256,20 @@ def bbs_post_detail(request, param):
         form = PostForm()
         post.PParentID.PLastComTime = post.PTime
         post.PParentID.save()
-    posts = list(BBSPost.objects.filter(id=threadID)) + \
-        list(BBSPost.objects.filter(PParentID=threadID).filter(PDelete=False))
+    if param1 == "OPonly":
+        OPonly = True
+        startPost = BBSPost.objects.get(id=threadID)
+        posts = list(BBSPost.objects.filter(id=threadID)) + \
+            list(BBSPost.objects.filter(PParentID=threadID).filter(PDelete=False).filter(PUserID=startPost.PUserID))
+    else:
+        posts = list(BBSPost.objects.filter(id=threadID)) + \
+            list(BBSPost.objects.filter(PParentID=threadID).filter(PDelete=False))
     for i in range(1, len(posts)):
         posts[i] = [posts[i]] + \
             list(BBSPost.objects.filter(PParentID=posts[i].id).filter(PDelete=False))
     form = PostForm()
-    if posts[0].PUserID == user.user:
-        return render(request, 'postDetail.html', {'posts': posts, 'form': form, 'user': user})
+    if user == None or posts[0].PUserID == user.user:
+        return render(request, 'postDetail.html', {'posts': posts, 'form': form, 'user': user, 'OPonly': OPonly})
     else:
         if UserFollowPost.objects.filter(UserID=request.user, PostID=posts[0]).exists():
             haveFollowed = True
@@ -285,7 +279,7 @@ def bbs_post_detail(request, param):
             haveLiked = True
         else:
             haveLiked = False
-        return render(request, 'postDetail.html', {'posts': posts, 'form': form, 'user': user, 'haveFollowed': haveFollowed, 'haveLiked': haveLiked})
+        return render(request, 'postDetail.html', {'posts': posts, 'form': form, 'user': user, 'haveFollowed': haveFollowed, 'haveLiked': haveLiked, 'OPonly':OPonly})
 
 
 @csrf_exempt
@@ -348,3 +342,57 @@ def change_image(request, username):
         user.save()
     posts = BBSUser.objects.all()
     return render(request, 'revisehead.html', {'posts': posts, 'user': user})
+
+@csrf_exempt
+def forbid_user_deal(request):
+    user = User.objects.get(id=int(request.POST['toBeForbiddenUserID']))
+    user = BBSUser.objects.get(user=user)
+    if user.UForbidden:
+        user.UForbidden = False
+    else:
+        user.UForbidden = True
+    user.save()
+    return HttpResponse('forbid success')
+
+@csrf_exempt
+def delete_user_deal(request, param):
+    if request.user.bbsuser.UAdmin:
+        user = User.objects.get(username=param)
+        #删除帖子
+        posts = BBSPost.objects.filter(PUserID=user).order_by('-PTime')
+        for post in posts:
+            comPosts = BBSPost.objects.filter(PParentID=post)
+            for comPost in comPosts:
+                miniPosts = BBSPost.objects.filter(PParentID=comPost)
+                for miniPost in miniPosts:
+                    miniPost.PUserID.bbsuser.UPostNum -= 1
+                    miniPost.PUserID.bbsuser.save()
+                    UserFollowPost.objects.filter(PostID=miniPost).delete()
+                    UserLikePost.objects.filter(PostID=miniPost).delete()
+                    miniPost.delete()
+                comPost.PUserID.bbsuser.UPostNum -= 1
+                comPost.PUserID.bbsuser.save()
+                UserFollowPost.objects.filter(PostID=comPost).delete()
+                UserLikePost.objects.filter(PostID=comPost).delete()
+                comPost.delete()
+            post.PUserID.bbsuser.UPostNum -= 1
+            post.PUserID.bbsuser.save()
+            UserFollowPost.objects.filter(PostID=post).delete()
+            UserLikePost.objects.filter(PostID=post).delete()
+            post.delete()
+        #删除用户关注关系
+        FollowUser.objects.filter(User1ID=user).delete()
+        followUsers = FollowUser.objects.filter(User2ID=user)
+        for followUser in followUsers:
+            followUser.User1ID.bbsuser.UFollowUserNum -= 1
+        followUsers.delete()
+        #删除用户收藏帖子关系
+        UserFollowPost.objects.filter(UserID=user).delete()
+        #删除用户点赞帖子关系
+        UserLikePost.objects.filter(UserID=user).delete()
+
+        user.bbsuser.delete()
+        user.delete()
+        return HttpResponse('用户已被删除')
+    else:
+        return HttpResponse('没有权限')

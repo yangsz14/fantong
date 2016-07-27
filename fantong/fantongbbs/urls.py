@@ -6,7 +6,7 @@ urlpatterns = [
     url(r'^accounts/profile/$', views.update_time),
     url(r'^accounts/profile/$', views.update_time),
     url(r'changepassword/(.+)/$', views.change_password),
-    url(r'^bbs_post_detail/(\d+)/$', views.bbs_post_detail, name='postDetail'),
+    url(r'^bbs_post_detail/(\d+)/(\w*)$', views.bbs_post_detail, name='postDetail'),
     url(r'changeimage/(.+)/$', views.change_image),
     url(r'^follow_user_deal/$', views.follow_user_deal),
     url(r'^ajax_deal/$', views.ajax_deal),
@@ -18,7 +18,9 @@ urlpatterns = [
     url(r'^follow_post_deal/$', views.follow_post_deal),
     url(r'^like_post_deal/$', views.like_post_deal),
     url(r'^delete_post_deal/$', views.delete_post_deal),
+    url(r'^ajax_get_tag/$', views.ajax_get_tag),
+    url(r'^search_by_tag/(.+)/$', views.search_by_tag),
     url(r'^forbid_user_deal/$', views.forbid_user_deal),
     url(r'^delete_user_deal/(\w+)/$', views.delete_user_deal),
+    url(r'^top_post_deal/$', views.top_post_deal),
 ]
-
